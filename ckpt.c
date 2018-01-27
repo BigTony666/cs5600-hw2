@@ -10,9 +10,8 @@
 struct MemoryRegion {
   void *startAddr;
   void *endAddr;
-  int isReadable;
-  int isWriteable;
-  int isExecutable;
+  char permission[4];
+  unsigned long long length;
 };
 
 #define MAX_NUMBER_HEADER 50
@@ -20,7 +19,9 @@ struct MemoryRegion {
 
 //All the function definition
 unsigned long long hex_to_ten(char *hex);
-
+int saveToDisk(FILE *fw, struct MemoryRegion *mr);
+int SaveCkpt();
+void handler();
 
 //convert hex string into ten base number
 unsigned long long hex_to_ten(char *hex) {
@@ -29,7 +30,7 @@ unsigned long long hex_to_ten(char *hex) {
   unsigned long long value = 0;
   int length = strlen(hex);
   for(i = 0; i < length; i++) {
-    c = hex[i];
+    c = *(hex + i);
     if ((c >= '0') && (c <= '9')) c -= '0';
     else if ((c >= 'a') && (c <= 'f')) c -= 'a' - 10;
     else if ((c >= 'A') && (c <= 'F')) c -= 'A' - 10;
@@ -38,11 +39,11 @@ unsigned long long hex_to_ten(char *hex) {
   return value;
 }
 
-int main(){
+int SaveCkpt(){
   struct MemoryRegion *mr;
-  int mrCount = 0;
-  unsigned long length;
-  FILE* fp;
+  int mrCount = 0, res;
+  unsigned long long length, start, end;
+  FILE* fp, *fw;
   char *line = NULL;
   size_t len = 0;
   ssize_t read;
@@ -52,6 +53,7 @@ int main(){
 
   //open the maps file
   fp = fopen(MAPS_PATH, "r");
+  fw = fopen("./myckpt", "w");
   //error
   if(fp == NULL) {
     printf("Failed to open that file.\n");
@@ -69,17 +71,70 @@ int main(){
     permission = strtok(NULL, " ");
     startAddr = strtok(string, "-");
     endAddr = strtok(NULL, "\0");
-    printf("%s %s %s\n", startAddr, endAddr, permission);
 
-    length = hex_to_ten(startAddr) - hex_to_ten(endAddr);
+    //calculate the length of Memory Address
+    start = hex_to_ten(startAddr);
+    end = hex_to_ten(endAddr);
+    length = end - start;
     mr->startAddr = startAddr;
     mr->endAddr = endAddr;
+    strcpy(mr->permission, permission);
+    mr->length = length;
 
+    //print the header information
+    printf("The Headers are:\n");
+    printf("%s %s %s %llu\n", (char*)mr->startAddr, (char*)mr->endAddr, mr->permission, mr->length);
+
+    if((res = saveToDisk(fw, mr)) < 0) {
+      printf("Fail to save checkpoint image.\n");
+      return -1;
+    }
   }
-
+  //free mr
+  free(mr);
   //free the line
   if(line) {
     free(line);
   }
+  printf("Success save checkpoint image.\n");
   return 0;
+}
+
+//save the ucontext
+int saveToDisk(FILE *fw, struct MemoryRegion *mr) {
+  ucontext_t mycontext;
+  int val;
+  if (getcontext(&mycontext) < 0) {
+    printf("Fail to get context.\n");
+    return -1;
+  }
+  val = fwrite(mr, sizeof(struct MemoryRegion), 1, fw);
+  if(val != 1) {
+    printf("Fail to save header.\n");
+  }
+  val = fwrite((void*)mr->startAddr, mr->length, 1, fw);
+  if(val != 1) {
+    printf("Fail to save memory data.\n");
+  }
+  val = fwrite(&mycontext, sizeof(mycontext), 1, fw);
+  if(val != 1) {
+    printf("Fail to save context.\n");
+  }
+  return 0;
+}
+
+//Declaring constructor functions
+__attribute__ ((constructor))
+void myconstructor() {
+  signal(SIGUSR2, handler);
+}
+
+void handler(int sign) {
+  signal(sign, SIG_DFL);
+  int res;
+  if((res = SaveCkpt()) != 0) {
+    printf("Fail!\n");
+    return;
+  }
+  return;
 }
