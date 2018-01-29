@@ -6,6 +6,8 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <assert.h>
+#include <signal.h>
 
 struct MemoryRegion {
   void *startAddr;
@@ -21,7 +23,7 @@ struct MemoryRegion {
 unsigned long long hex_to_ten(char *hex);
 int saveToDisk(FILE *fw, struct MemoryRegion *mr);
 int SaveCkpt();
-void handler();
+void handler(int sign);
 
 //convert hex string into ten base number
 unsigned long long hex_to_ten(char *hex) {
@@ -48,6 +50,7 @@ int SaveCkpt(){
   size_t len = 0;
   ssize_t read;
   char *string, *startAddr, *endAddr, *permission;
+  ucontext_t mycontext;
   //malloc a region for MemorySection  wait to clean
   //mrs = (struct MemoryRegion *)malloc(MAX_NUMBER_HEADER * sizeof(struct MemoryRegion));
 
@@ -62,79 +65,103 @@ int SaveCkpt(){
 
   //read line by line and extract information
   while((read = getline(&line, &len, fp)) != -1){
-    //count how many MemoryRegion(line)
-    mrCount++;
-    //get startAddr, endAddr, and permission
-    mr = (struct MemoryRegion *)malloc(sizeof(struct MemoryRegion));
-    startAddr = strtok(line, " ");
-    string = strdup(startAddr);
-    permission = strtok(NULL, " ");
-    startAddr = strtok(string, "-");
-    endAddr = strtok(NULL, "\0");
+    // skip [vvar], [vdso], [vsyscall]
+    if(strstr(line, "[vvar]") != NULL || strstr(line, "[vdso]") != NULL || strstr(line, "[vsyscall]") != NULL) {
+      //count how many MemoryRegion(line)
+      mrCount++;
+      //get startAddr, endAddr, and permission
+      mr = (struct MemoryRegion *)malloc(sizeof(struct MemoryRegion));
+      startAddr = strtok(line, " ");
+      string = strdup(startAddr);
+      permission = strtok(NULL, " ");
+      startAddr = strtok(string, "-");
+      endAddr = strtok(NULL, "\0");
 
-    //calculate the length of Memory Address
-    start = hex_to_ten(startAddr);
-    end = hex_to_ten(endAddr);
-    length = end - start;
-    mr->startAddr = startAddr;
-    mr->endAddr = endAddr;
-    strcpy(mr->permission, permission);
-    mr->length = length;
+      //calculate the length of Memory Address
+      start = hex_to_ten(startAddr);
+      end = hex_to_ten(endAddr);
+      length = end - start;
+      mr->startAddr = startAddr;
+      mr->endAddr = endAddr;
+      strcpy(mr->permission, permission);
+      mr->length = length;
 
-    //print the header information
-    printf("The Headers are:\n");
-    printf("%s %s %s %llu\n", (char*)mr->startAddr, (char*)mr->endAddr, mr->permission, mr->length);
+      //print the header information
+      printf("The Headers are:\n");
+      printf("%s %s %s %llu\n", (char*)mr->startAddr, (char*)mr->endAddr, mr->permission, mr->length);
 
-    if((res = saveToDisk(fw, mr)) < 0) {
-      printf("Fail to save checkpoint image.\n");
-      return -1;
+      //save header and memory data to file
+      if(mr->permission[0] == 'r') {
+        if((res = saveToDisk(fw, mr)) < 0) {
+          printf("Fail to save checkpoint image.\n");
+          return -1;
+        }
+      }
+
+      //free mr
+      free(mr);
     }
   }
-  //free mr
-  free(mr);
   //free the line
   if(line) {
     free(line);
   }
+
+  //write context
+  if (getcontext(&mycontext) < 0) {
+    printf("Fail to get context.\n");
+    return -1;
+  }
+  res = fwrite(&mycontext, sizeof(mycontext), 1, fw);
+  if(res != 1) {
+    printf("Fail to save context.\n");
+  } else {
+    printf("Success to save context.\n");
+  }
+
+  fclose(fp);
+  fclose(fw);
   printf("Success save checkpoint image.\n");
   return 0;
 }
 
 //save the ucontext
 int saveToDisk(FILE *fw, struct MemoryRegion *mr) {
-  ucontext_t mycontext;
-  int val;
-  if (getcontext(&mycontext) < 0) {
-    printf("Fail to get context.\n");
-    return -1;
-  }
-  val = fwrite(mr, sizeof(struct MemoryRegion), 1, fw);
-  if(val != 1) {
-    printf("Fail to save header.\n");
-  }
-  val = fwrite((void*)mr->startAddr, mr->length, 1, fw);
-  if(val != 1) {
-    printf("Fail to save memory data.\n");
-  }
-  val = fwrite(&mycontext, sizeof(mycontext), 1, fw);
-  if(val != 1) {
-    printf("Fail to save context.\n");
-  }
-  return 0;
+    size_t val;
+    val = fwrite(mr, sizeof(struct MemoryRegion), 1, fw);
+    //assert(val == 1);
+    if(val != 1) {
+      printf("Fail to save header.\n");
+    } else {
+      printf("Success to save header.\n");
+    }
+    val = fwrite((void*)mr->startAddr, mr->length, 1, fw);
+    //assert(val == 1);
+    if(val != 1) {
+      printf("Fail to save memory data.\n");
+    } else {
+      printf("Success to memory data.\n");
+    }
+    return 0;
 }
 
 //Declaring constructor functions
-__attribute__ ((constructor))
-void myconstructor() {
-  signal(SIGUSR2, handler);
-}
-
-void handler(int sign) {
-  signal(sign, SIG_DFL);
-  int res;
-  if((res = SaveCkpt()) != 0) {
-    printf("Fail!\n");
-    return;
-  }
-  return;
+// __attribute__((constructor))
+// void myconstructor() {
+// 	signal(SIGUSR2, handler);
+// }
+//
+//
+// void handler(int sign) {
+//   signal(sign, SIG_DFL);
+//   int res;
+//   if((res = SaveCkpt()) != 0) {
+//     printf("Fail!\n");
+//     return;
+//   }
+//   return;
+// }
+int main() {
+  SaveCkpt();
+  return 0;
 }
