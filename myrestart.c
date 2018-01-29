@@ -7,6 +7,7 @@
 #include <sys/mman.h>
 #include <sys/types.h>
 #include <ucontext.h>
+#include <errno.h>
 
 #define ADDRESS 0x5300000
 #define SIZE 0x1000
@@ -66,9 +67,10 @@ void restore_memory() {
       end = hex_to_ten(endAddr);
       length = end - start;
     }
+    //release the stack
+    munmap((void*)startAddr, (size_t)length);
   }
-  //release the stack
-  munmap((void*)startAddr, (size_t)length);
+
   printf("Success to unmap!\n");
   fclose(fp);
 
@@ -76,36 +78,47 @@ void restore_memory() {
   //Step2: restore the checkpoint from the file. First restore the data of memory,
   //then restore the context of process.
   struct MemoryRegion *mr;
-  int fd, ret;
+  int ret;
   void* map;
-  if((fd = open(ckpt_image, O_RDONLY)) < 0) {
+  if((fp = fopen(ckpt_image, "r")) == NULL) {
     printf("Fail to open checkpoint file.\n");
     exit(EXIT_FAILURE);
   };
-  while((ret = read(fd, mr, sizeof(struct MemoryRegion))) > 0) {
+  mr = (struct MemoryRegion *)malloc(sizeof(struct MemoryRegion));
+
+  while((ret = fread(mr, sizeof(struct MemoryRegion), 1, fp)) > 0) {
     //mmap the memory section
-    mr = (struct MemoryRegion *)malloc(sizeof(struct MemoryRegion));
-    map = mmap(mr->startAddr, mr->length, PROT_READ|PROT_EXEC|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS|MAP_FIXED , -1, 0);
-    if(map < (void*)0) {
-      printf("Fail to map Memory Section, occured region from %s to %s.\n", (char*)mr->startAddr, (char*)mr->endAddr);
+    if((map = mmap((void*)mr->startAddr, mr->length, PROT_READ|PROT_EXEC|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS|MAP_FIXED , -1, 0)) < (void*)0) {
+      printf("Fail to mmap memory section. Error: %s\n", strerror(errno));
     }
+    printf("start: %s, length: %llu, permission: %s\n", (char*)mr->startAddr, mr->length, mr->permission);
     //set the permission
-    int permission = 0;
+    int permissions = 0;
     if(mr->permission[0] != '-')
-      permission |= PROT_READ;
+      permissions |= PROT_READ;
     if(mr->permission[1] != '-')
-      permission |= PROT_WRITE;
+      permissions |= PROT_WRITE;
     if(mr->permission[2] != '-')
-      permission |= PROT_EXEC;
-    if (mprotect(mr, sizeof(struct MemoryRegion), permission) == -1)
-      printf("Fail to mprotect, occured region from %s to %s.\n", (char*)mr->startAddr, (char*)mr->endAddr);
+      permissions |= PROT_EXEC;
+    //printf("start: %s, length: %llu, permission: %s\n", (char*)mr->startAddr, mr->length, mr->permission);
+    if ((ret = mprotect(mr->startAddr, mr->length, permissions)) < 0 )
+      printf("Fail to mprotect. Error: %s\n", strerror(errno));
     //restore the memory data
-    if(read(fd, mr->startAddr, mr->length) < 0) {
-      printf("Fail to read memory data, occured region from %s to %s.\n", (char*)mr->startAddr, (char*)mr->endAddr);
+    if(fread(mr->startAddr, mr->length, 1, fp) < 0) {
+      printf("Fail to read memory data. Error: %s\n", strerror(errno));
     };
   }
+  printf("Success to restore memory data!\n");
 
   //Step3: restore the context
+  if((ret = fread(&uc, sizeof(uc), 1, fp)) < 0) {
+    printf("Fail to read context from checkpoint file.\n");
+  }
+  setcontext(&uc);
+  printf("Success to restore context.\n");
+  printf("Finish the whole work!!!\n");
+  fclose(fp);
+  return;
 }
 
 //convert hex string into ten base number
