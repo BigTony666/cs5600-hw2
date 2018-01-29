@@ -146,22 +146,22 @@ int saveToDisk(FILE *fw, struct MemoryRegion *mr) {
 }
 
 //Declaring constructor functions
-// __attribute__((constructor))
-// void myconstructor() {
-// 	signal(SIGUSR2, handler);
-// }
-//
-//
-// void handler(int sign) {
-//   signal(sign, SIG_DFL);
-//   int res;
-//   if((res = SaveCkpt()) != 0) {
-//     printf("Fail!\n");
-//     return;
-//   }
-//   return;
-// }
-int main() {
-  SaveCkpt();
-  return 0;
+__attribute__((constructor))
+void myconstructor() {
+	signal(SIGUSR2, handler);
 }
+
+
+void handler(int sign) {
+  signal(sign, SIG_DFL);
+  int res;
+  if((res = SaveCkpt()) != 0) {
+    printf("Fail!\n");
+    return;
+  }
+  return;
+}
+// int main() {
+//   SaveCkpt();
+//   return 0;
+// }
