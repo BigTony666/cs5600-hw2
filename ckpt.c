@@ -13,7 +13,7 @@ struct MemoryRegion {
   void *startAddr;
   void *endAddr;
   char permission[4];
-  unsigned long long length;
+  size_t length;
 };
 
 #define MAX_NUMBER_HEADER 50
@@ -44,10 +44,10 @@ unsigned long long hex_to_ten(char *hex) {
 int SaveCkpt(){
   struct MemoryRegion *mr;
   int mrCount = 0, res;
-  unsigned long long length, start, end;
+  unsigned long long start, end;
   FILE* fp, *fw;
   char *line = NULL;
-  size_t len = 0;
+  size_t len = 0, length = 0;
   ssize_t read;
   char *string, *startAddr, *endAddr, *permission;
   ucontext_t mycontext;
@@ -56,18 +56,20 @@ int SaveCkpt(){
 
   //open the maps file
   fp = fopen(MAPS_PATH, "r");
-  fw = fopen("./myckpt", "w");
+  fw = fopen("./myckpt", "wb");
   //error
   if(fp == NULL) {
     printf("Failed to open that file.\n");
     exit(EXIT_FAILURE);
   }
 
+
   //read line by line and extract information
   while((read = getline(&line, &len, fp)) != -1){
     // skip [vvar], [vdso], [vsyscall]
-    if(strstr(line, "[vvar]") != NULL || strstr(line, "[vdso]") != NULL || strstr(line, "[vsyscall]") != NULL) {
+    if(strstr(line, "[vvar]") == NULL && strstr(line, "[vdso]") == NULL && strstr(line, "[vsyscall]") == NULL) {
       //count how many MemoryRegion(line)
+      printf("The line is: %s", line);
       mrCount++;
       //get startAddr, endAddr, and permission
       mr = (struct MemoryRegion *)malloc(sizeof(struct MemoryRegion));
@@ -76,11 +78,12 @@ int SaveCkpt(){
       permission = strtok(NULL, " ");
       startAddr = strtok(string, "-");
       endAddr = strtok(NULL, "\0");
+      printf("|%s| |%s|\n", startAddr, endAddr);
 
       //calculate the length of Memory Address
       start = hex_to_ten(startAddr);
       end = hex_to_ten(endAddr);
-      length = end - start;
+      length = (size_t)(end - start);
       mr->startAddr = startAddr;
       mr->endAddr = endAddr;
       strcpy(mr->permission, permission);
@@ -88,7 +91,7 @@ int SaveCkpt(){
 
       //print the header information
       printf("The Headers are:\n");
-      printf("%s %s %s %llu\n", (char*)mr->startAddr, (char*)mr->endAddr, mr->permission, mr->length);
+      printf("|%s| |%s| |%s| |%zu|\n", (char*)mr->startAddr, (char*)mr->endAddr, mr->permission, mr->length);
 
       //save header and memory data to file
       if(mr->permission[0] == 'r') {
@@ -138,9 +141,9 @@ int saveToDisk(FILE *fw, struct MemoryRegion *mr) {
     val = fwrite((void*)mr->startAddr, mr->length, 1, fw);
     //assert(val == 1);
     if(val != 1) {
-      printf("Fail to save memory data.\n");
+      printf("Fail to save memory data. The val value is: %lu.\n", val);
     } else {
-      printf("Success to memory data.\n");
+      printf("Success to memory data.The val value is: %lu.\n", val);
     }
     return 0;
 }
@@ -148,6 +151,8 @@ int saveToDisk(FILE *fw, struct MemoryRegion *mr) {
 //Declaring constructor functions
 __attribute__((constructor))
 void myconstructor() {
+  //get pid
+  printf("The pid is: %d\n", getpid());
 	signal(SIGUSR2, handler);
 }
 

@@ -90,8 +90,10 @@ void restore_memory() {
     //mmap the memory section
     if((map = mmap((void*)mr->startAddr, mr->length, PROT_READ|PROT_EXEC|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS|MAP_FIXED , -1, 0)) < (void*)0) {
       printf("Fail to mmap memory section. Error: %s\n", strerror(errno));
+    } else {
+      printf("Success to mmap memory section!\n");
     }
-    printf("start: %s, length: %llu, permission: %s\n", (char*)mr->startAddr, mr->length, mr->permission);
+    //printf("start: %s, length: %llu, permission: %s\n", (char*)mr->startAddr, mr->length, mr->permission);
     //set the permission
     int permissions = 0;
     if(mr->permission[0] != '-')
@@ -101,12 +103,16 @@ void restore_memory() {
     if(mr->permission[2] != '-')
       permissions |= PROT_EXEC;
     //printf("start: %s, length: %llu, permission: %s\n", (char*)mr->startAddr, mr->length, mr->permission);
-    if ((ret = mprotect(mr->startAddr, mr->length, permissions)) < 0 )
+    if ((ret = mprotect((void *)mr->startAddr, mr->length, permissions)) < 0 )
       printf("Fail to mprotect. Error: %s\n", strerror(errno));
+    else
+      printf("Success to mprotect memory section!\n");
     //restore the memory data
     if(fread(mr->startAddr, mr->length, 1, fp) < 0) {
       printf("Fail to read memory data. Error: %s\n", strerror(errno));
-    };
+    } else {
+      printf("Success to read memory section data!\n");
+    }
   }
   printf("Success to restore memory data!\n");
 
