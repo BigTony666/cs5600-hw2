@@ -11,17 +11,17 @@
 
 #define ADDRESS 0x5300000
 #define SIZE 0x1000
+#define MAPS_PATH "/proc/self/maps"
+#define MAX_NUMBER_LINE_WORD 1000
 
 struct MemoryRegion {
   void *startAddr;
   void *endAddr;
   char permission[4];
-  unsigned long long length;
 };
 
 char ckpt_image[1000]; //file name
 ucontext_t uc;
-struct MemoryRegion mr;
 
 //all the functions are here
 void restore_memory();
@@ -48,52 +48,82 @@ int main(int argc, char* argv[]) {
 
 void restore_memory() {
   //Step1: remove the current stack of program myrestart using ummap
-  FILE* fp;
-  char *line = NULL;
-  size_t len = 0;
-  ssize_t lread;
-  char *string, *address, *startAddr, *endAddr;
-  unsigned long long start, end, length;
-  if((fp = fopen("/proc/self/maps", "r")) < 0) {
+  int fd, i = 0;
+  char *line, *address, *startAddr, *endAddr, ch;
+  char str[MAX_NUMBER_LINE_WORD];
+  unsigned long long start, end;
+  long int length = 0;
+  if((fd = open(MAPS_PATH, O_RDONLY)) < 0) {
     printf("Fail to open self maps file.\n");
     exit(EXIT_FAILURE);
   };
-  while((lread = getline(&line, &len, fp)) != -1){
-    if((string = strstr(line, "[stack]")) != NULL) {
+  while((read(fd, &ch, 1)) > 0){
+    if(ch != '\n') {
+      *(str + i) = ch;
+      i++;
+      continue;
+    } else {
+      *(str + i) = '\0';
+      i = 0;
+    }
+    line = strtok(str, "\n");
+    line[strlen(line)] = '\0';
+
+    //find the stack memory section and munmap it
+    if((strstr(line, "[stack]")) != NULL) {
       address = strtok(line, " ");
       startAddr = strtok(address, "-");
       endAddr = strtok(NULL, "\0");
       start = hex_to_ten(startAddr);
       end = hex_to_ten(endAddr);
       length = end - start;
+
+      //release the stack
+      munmap((void*)startAddr, (size_t)length);
+      printf("Success to unmap!\n");
     }
-    //release the stack
-    munmap((void*)startAddr, (size_t)length);
   }
-
-  printf("Success to unmap!\n");
-  fclose(fp);
+  close(fd);
 
 
-  //Step2: restore the checkpoint from the file. First restore the data of memory,
-  //then restore the context of process.
+  //Step2: restore the memory data and context from the checkpoint file.
   struct MemoryRegion *mr;
   int ret;
   void* map;
-  if((fp = fopen(ckpt_image, "r")) == NULL) {
+  if((fd = open(ckpt_image, O_RDONLY)) < 0) {
     printf("Fail to open checkpoint file.\n");
     exit(EXIT_FAILURE);
   };
+
+  //read the context first and store it into uc
+  if((read(fd, &uc, sizeof(ucontext_t))) <= 0) {
+    printf("Fail to read context from checkpoint file.\n");
+  }
+
   mr = (struct MemoryRegion *)malloc(sizeof(struct MemoryRegion));
 
-  while((ret = fread(mr, sizeof(struct MemoryRegion), 1, fp)) > 0) {
+  while((read(fd, mr, sizeof(struct MemoryRegion))) > 0) {
     //mmap the memory section
-    if((map = mmap((void*)mr->startAddr, mr->length, PROT_READ|PROT_EXEC|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS|MAP_FIXED , -1, 0)) < (void*)0) {
+    length = (char*)mr->endAddr - (char*)mr->startAddr;
+    printf("startAddr:%p length: %ld\n", mr->startAddr, length);
+    if((map = mmap((void*)mr->startAddr, length,
+       PROT_READ|PROT_EXEC|PROT_WRITE,
+       MAP_PRIVATE|MAP_ANONYMOUS|MAP_FIXED , -1, 0)) < 0) {
       printf("Fail to mmap memory section. Error: %s\n", strerror(errno));
     } else {
       printf("Success to mmap memory section!\n");
     }
     //printf("start: %s, length: %llu, permission: %s\n", (char*)mr->startAddr, mr->length, mr->permission);
+
+    //restore the memory data
+    mprotect(mr->startAddr, length, PROT_WRITE);
+    printf("startAddr:%p length: %ld\n", mr->startAddr, (char*)mr->endAddr - (char*)mr->startAddr);
+    if(read(fd, mr->startAddr, (char*)mr->endAddr - (char*)mr->startAddr) < 0) {
+      printf("Fail to read memory data. Error: %s\n", strerror(errno));
+    } else {
+      printf("Success to read memory section data!\n");
+    }
+
     //set the permission
     int permissions = 0;
     if(mr->permission[0] != '-')
@@ -102,28 +132,19 @@ void restore_memory() {
       permissions |= PROT_WRITE;
     if(mr->permission[2] != '-')
       permissions |= PROT_EXEC;
-    //printf("start: %s, length: %llu, permission: %s\n", (char*)mr->startAddr, mr->length, mr->permission);
-    if ((ret = mprotect((void *)mr->startAddr, mr->length, permissions)) < 0 )
+    if ((ret = mprotect(mr->startAddr, length, permissions)) < 0 )
       printf("Fail to mprotect. Error: %s\n", strerror(errno));
     else
       printf("Success to mprotect memory section!\n");
-    //restore the memory data
-    if(fread(mr->startAddr, mr->length, 1, fp) < 0) {
-      printf("Fail to read memory data. Error: %s\n", strerror(errno));
-    } else {
-      printf("Success to read memory section data!\n");
-    }
+    free(mr);
+    mr = (struct MemoryRegion *)malloc(sizeof(struct MemoryRegion));
   }
-  printf("Success to restore memory data!\n");
-
+  printf("Success to restore all memory data!\n");
+  printf("-----Finish the whole work!!!-----\n");
+  free(mr);
   //Step3: restore the context
-  if((ret = fread(&uc, sizeof(uc), 1, fp)) < 0) {
-    printf("Fail to read context from checkpoint file.\n");
-  }
   setcontext(&uc);
-  printf("Success to restore context.\n");
-  printf("Finish the whole work!!!\n");
-  fclose(fp);
+  close(fd);
   return;
 }
 

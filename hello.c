@@ -3,10 +3,9 @@
 
 int main() {
   int sleep_time = 1;
-  char output = '.';
 
   while(1){
-    printf("%c", output);
+    printf(". ");
     //force the output Normally
     fflush(stdout);
     //sleep for one second

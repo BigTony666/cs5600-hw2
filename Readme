@@ -1,0 +1,10 @@
+Problem description
+In this assignment, you will build a mini-DMTCP. DMTCP is a widely used software package for checkpoint-restart: http://dmtcp.sourceforge.net. However, you do not need any prior knowledge of DMTCP for this assignment. The software that you produce will be self-contained.
+
+Build:
+  Use make clean : to clear the whole
+  Use make gdb : to debug
+
+Run:
+  Use make : to run the first step of program(save the checkpoint file and kill the old program)
+  Use make res : to run the second step of program(restore process from myskpt file)
